@@ -1,112 +1,126 @@
-import { Box } from '@chakra-ui/react';
-import React, { useState, useEffect } from 'react';
-import { Carousel } from 'react-responsive-carousel';
+import React, { useEffect, useState } from "react";
+import { Carousel } from "react-responsive-carousel";
 import "react-responsive-carousel/lib/styles/carousel.min.css";
-import { Text } from '@chakra-ui/react';
-import { ethers } from 'ethers';
-import { config } from 'dotenv';
-
+import { Box, Text, Image } from "@chakra-ui/react";
+import { useQueries } from "react-query";
+import { config } from "dotenv";
 config();
 
-const apiKey = process.env.COVALENT_API_KEY;
-
-const NftCarousel = ({ address } : any) => {
-    const headers = {
-        'Authorization': `Bearer ${apiKey}`,
-    };
-
-    const [nftBalances, setNftBalances] = useState<Record<string, any>>({})
-    const [loading, setLoading] = useState(true);
-
-    const chains = ['eth-mainnet', 'matic-mainnet', 'matic-mumbai'];
+const NftCarousel = ({ address }: { address: string }) => {
+    const chains = ["eth-mainnet", "matic-mainnet", "matic-mumbai"];
 
     const isEnsName = (name: string) => {
-        return name.includes('.eth');
+        return name.includes(".eth");
     };
+
+    const getNftBalances = async (chainName: string, address: string) => {
+        let url = `http://localhost:8080/api/fetch/nftBalance?chainName=${chainName}&address=${address}`;
+        const res = await fetch(url, { method: "GET" });
+        const data = await res.json();
+        return data;
+    };
+
+    const [resolvedAddress, setResolvedAddress] = useState<string>(address);
 
     useEffect(() => {
-        const fetchData = async () => {
-            if (address) {
-                const provider = new ethers.providers.JsonRpcProvider( process.env.ETH_MAINNET_RPC_URL); 
-                let resolvedAddress = address;
-                if (isEnsName(address)) {
-                    try {
-                        resolvedAddress = await provider.resolveName(address);
-                    } catch (error) {
-                        console.error('Could not resolve ENS name:', error);
-                        return; 
-                    }
-                }
-
-                try {
-                    const promises = chains.map((chainName) => getNftBalances(chainName, resolvedAddress));
-                    const results = await Promise.all(promises);
-                    const balances : any = {};
-                    results.forEach((data, index) => {
-                        balances[chains[index]] = data;
-                    });
-                    setNftBalances(balances);
-                    setLoading(false);
-                } catch (error) {
-                    console.error('Error fetching NFT balances:', error);
-                }
+        if (isEnsName(address)) {
+        getResolvedName(address)
+            .then((resolvedEnsAddress) => {
+            if (resolvedEnsAddress.error) {
+                console.error("Error:", resolvedEnsAddress.error_message);
+            } else {
+                console.log("Resolved ENS name:", resolvedEnsAddress);
+                setResolvedAddress(resolvedEnsAddress);
             }
-        };
-        fetchData();
+            })
+            .catch((error) => {
+            console.error("Could not resolve ENS name:", error);
+            });
+        }
     }, [address]);
 
-    const getNftBalances = async (chainName : string, address : string) => {
-        try {
-            const url = `https://api.covalenthq.com/v1/${chainName}/address/${address}/balances_nft/`;
-            const res = await fetch(url, { method: 'GET', headers });
-            const data = await res.json();
-            return data;
-        } catch (error) {
-            console.error(`Error fetching NFT balances for chain '${chainName}':`, error);
-            return null;
-        }
+    const getResolvedName = async (address: string) => {
+        const url = `http://localhost:5001/api/fetch/resolveEns?ensName=${address}`;
+        const res = await fetch(url);
+        const data = await res.json();
+        return data;
     };
 
-    const getOpenseaUrl = (chainName : string, contractAddress : string, tokenId : string) => {
-        let openseaChainName = '';
-        if (chainName === 'eth-mainnet' || chainName === 'matic-mainnet') {
-            if (chainName === 'eth-mainnet') {
-                openseaChainName = 'ethereum';
-            } else if (chainName === 'matic-mainnet') {
-                openseaChainName = 'matic';
-            }
-            return `https://opensea.io/assets/${openseaChainName}/${contractAddress}/${tokenId}`;
+    const results = useQueries(
+        chains.map((chainName) => {
+        return {
+            queryKey: ["nftBalances", chainName, resolvedAddress],
+            queryFn: () => getNftBalances(chainName, resolvedAddress),
+        };
+        })
+    );
+
+    const nftBalances: Record<string, any> = {};
+    results.forEach((result, index) => {
+        if (result.status === "success") {
+        nftBalances[chains[index]] = result.data;
+        }
+    });
+
+    const getOpenseaUrl = (
+        chainName: string,
+        contractAddress: string,
+        tokenId: string
+    ) => {
+        let openseaChainName = "";
+        if (chainName === "eth-mainnet" || chainName === "matic-mainnet") {
+        if (chainName === "eth-mainnet") {
+            openseaChainName = "ethereum";
+        } else if (chainName === "matic-mainnet") {
+            openseaChainName = "matic";
+        }
+        return `https://opensea.io/assets/${openseaChainName}/${contractAddress}/${tokenId}`;
         } else {
-            openseaChainName = 'mumbai';
-            return `https://testnets.opensea.io/assets/${openseaChainName}/${contractAddress}/${tokenId}`;
+        openseaChainName = "mumbai";
+        return `https://testnets.opensea.io/assets/${openseaChainName}/${contractAddress}/${tokenId}`;
         }
     };
 
-    return (
-        <div style={{ maxHeight: '60vh', maxWidth : '40vw', overflowY: 'auto' }}>
+  return (
+        <Box maxHeight="60vh" maxWidth="40vw" overflowY="auto">
             <Carousel showThumbs={false} dynamicHeight={false}>
                 {Object.keys(nftBalances).flatMap((chainName) =>
-                    nftBalances[chainName]?.data?.items.map((nft : any, index : number) => (
-                        <Box key={index} py={"5%"} rounded="md">
-                            <a href={getOpenseaUrl(chainName, nft.contract_address, nft?.nft_data[0].token_id)}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="block"
-                            >
-                                <img
-                                    src={nft?.nft_data[0].external_data?.image || "https://via.placeholder.com/150"}
-                                    alt={nft?.contract_name || "NFT image"}
-                                    className="object-contain h-[20rem] rounded-xl mb-4"
-                                />
-                            </a>
-                            <Text fontSize="xl" mb="1" color="#F8F8FF">{nft.contract_name}</Text>
-                            <Text fontSize="sm" color="#F8F8FF">{chainName}</Text>
-                        </Box>
-                    ))
+                nftBalances[chainName]?.data?.items.map((nft: any, index: number) => (
+                    <Box key={index} mb={"5%"} borderRadius="md">
+                    <a
+                        href={getOpenseaUrl(
+                        chainName,
+                        nft.contract_address,
+                        nft?.nft_data[0].token_id
+                        )}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="block"
+                    >
+                        <Image
+                        src={
+                            nft?.nft_data[0].external_data?.image ||
+                            "https://via.placeholder.com/150"
+                        }
+                        alt={nft?.contract_name || "NFT image"}
+                        objectFit="contain"
+                        height={"20rem"}
+                        borderRadius="xl"
+                        mb={4}
+                        />
+                    </a>
+                    <Text fontSize="xl" mb={1} color="F8F8FF">
+                        {nft.contract_name}
+                    </Text>
+                    <Text fontSize="sm" color="F8F8FF">
+                        {chainName}
+                    </Text>
+                    </Box>
+                ))
                 )}
-            </Carousel>
-        </div>
-    );
+        </Carousel>
+        </Box>
+  );
 };
 
 export default NftCarousel;
